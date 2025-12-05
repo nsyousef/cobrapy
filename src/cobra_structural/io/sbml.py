@@ -40,9 +40,7 @@ from typing import IO, Match, Optional, Pattern, Tuple, Type, Union
 
 import libsbml
 
-import cobra
-
-from ..core import GPR, Gene, Group, Metabolite, Model, Reaction
+from ..core import GPR, Gene, Group, Metabolite, Model, Reaction, Configuration
 from ..manipulation.validate import check_metabolite_compartment_formula
 from ..util.solver import linear_reaction_coefficients, set_objective
 
@@ -58,7 +56,7 @@ LOGGER = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 # Defaults and constants for writing SBML
 # -----------------------------------------------------------------------------
-config = cobra.Configuration()  # for default bounds
+config = Configuration()  # for default bounds
 LOWER_BOUND_ID = "cobra_default_lb"
 UPPER_BOUND_ID = "cobra_default_ub"
 ZERO_BOUND_ID = "cobra_0_bound"

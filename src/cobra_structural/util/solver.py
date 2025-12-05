@@ -29,12 +29,12 @@ from optlang.interface import (
 )
 from optlang.symbolics import Basic, Zero
 
-from cobra.exceptions import (
+from cobra_structural.exceptions import (
     OPTLANG_TO_EXCEPTIONS_DICT,
     OptimizationError,
     SolverNotFound,
 )
-from cobra.util.context import get_context
+from cobra_structural.util.context import get_context
 
 
 # Used to avoid cyclic reference and enable third-party static type checkers to work

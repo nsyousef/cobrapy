@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Optional, Union
 
 import pandas as pd
 
-from cobra.flux_analysis import flux_variability_analysis, pfba
-from cobra.summary import Summary
+from cobra_structural.flux_analysis import flux_variability_analysis, pfba
+from cobra_structural.summary import Summary
 
 
 if TYPE_CHECKING:

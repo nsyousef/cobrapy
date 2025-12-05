@@ -233,8 +233,9 @@ class Metabolite(Species):
         Raises
         ------
         RuntimeError
-            If the underlying model was never optimized beforehand or the
-            metabolite is not part of a model.
+            If the underlying model was never optimized beforehand, the
+            metabolite is not part of a model, or if the model is structural-only
+            without a solver.
         OptimizationError
             If the solver status is anything other than 'optimal'.
 
@@ -248,6 +249,13 @@ class Metabolite(Species):
         >>> solution.shadow_prices.glc__D_e
         -0.091664746375104883
         """
+        if not hasattr(self._model, 'constraints'):
+            raise RuntimeError(
+                f"metabolite '{self.id}' shadow price is not available. This is a "
+                "structural-only model without a solver. To compute shadow prices, "
+                "export the model to a file (e.g., .json or .sbml) and load "
+                "it into a full COBRApy instance with a solver."
+            )
         try:
             check_solver_status(self._model.solver.status)
             return self._model.constraints[self.id].dual
