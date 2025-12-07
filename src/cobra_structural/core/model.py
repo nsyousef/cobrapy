@@ -3,12 +3,11 @@
 import logging
 from copy import copy, deepcopy
 from functools import partial
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Union
 from warnings import warn
 
 from ..medium import find_boundary_types, find_external_compartment, sbo_terms
 from ..util.context import HistoryManager, get_context
-from ..util.util import AutoVivification, format_long_string
 from .configuration import Configuration
 from .dictlist import DictList
 from .gene import Gene
@@ -60,7 +59,7 @@ class Model(Object):
         self, id_or_model: Union[str, "Model", None] = None, name: Optional[str] = None
     ) -> None:
         """Initialize the Model.
-        
+
         This creates a structural-only model without an optlang solver.
         Model structure is tracked via reactions, metabolites, and genes.
         """
@@ -75,7 +74,7 @@ class Model(Object):
             self.groups = DictList()  # A list of cobra.Groups
             self._compartments = {}
             self._contexts = []
-            
+
             # Store objective as simple dict: {reaction: coefficient}
             self._objective = {}
             self._objective_direction = "max"
@@ -389,7 +388,9 @@ class Model(Object):
             new_met = metabolite.__class__()
             for attr, value in metabolite.__dict__.items():
                 if attr not in do_not_copy_by_ref:
-                    new_met.__dict__[attr] = copy(value) if attr == "formula" else value
+                    new_met.__dict__[attr] = (
+                        copy(value) if attr == "formula" else value
+                    )
             new_met._model = new
             new.metabolites.append(new_met)
 
@@ -398,7 +399,9 @@ class Model(Object):
             new_gene = gene.__class__(None)
             for attr, value in gene.__dict__.items():
                 if attr not in do_not_copy_by_ref:
-                    new_gene.__dict__[attr] = copy(value) if attr == "formula" else value
+                    new_gene.__dict__[attr] = (
+                        copy(value) if attr == "formula" else value
+                    )
             new_gene._model = new
             new.genes.append(new_gene)
 
@@ -692,7 +695,7 @@ class Model(Object):
             reaction._model = self
             if context:
                 context(partial(setattr, reaction, "_model", None))
-            
+
             for metabolite in list(reaction.metabolites):
                 if metabolite not in self.metabolites:
                     self.add_metabolites(metabolite)
@@ -703,7 +706,7 @@ class Model(Object):
                     model_metabolite._reaction.add(reaction)
                     if context:
                         context(partial(model_metabolite._reaction.remove, reaction))
-            
+
             reaction.update_genes_from_gpr()
 
         self.reactions += pruned
@@ -1085,7 +1088,7 @@ class Model(Object):
             for reaction in existing:
                 reaction.id = f"{prefix_existing}{reaction.id}"
         new_model.add_reactions(new_reactions)
-        
+
         # Set objective based on requested combination
         if objective == "left":
             new_model._objective = dict(self._objective)
@@ -1097,13 +1100,12 @@ class Model(Object):
                 combined_obj[rxn] = combined_obj.get(rxn, 0) + coef
             for rxn, coef in right._objective.items():
                 if rxn in new_model.reactions:
-                    combined_obj[new_model.reactions.get_by_id(rxn.id)] = combined_obj.get(
-                        new_model.reactions.get_by_id(rxn.id), 0
-                    ) + coef
+                    target_rxn = new_model.reactions.get_by_id(rxn.id)
+                    combined_obj[target_rxn] = combined_obj.get(target_rxn, 0) + coef
             new_model._objective = combined_obj
         else:
             raise ValueError(f"Invalid objective option: {objective}")
-        
+
         return new_model
 
     def _repr_html_(self) -> str:

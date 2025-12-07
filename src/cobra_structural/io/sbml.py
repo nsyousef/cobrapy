@@ -40,7 +40,7 @@ from typing import IO, Match, Optional, Pattern, Tuple, Type, Union
 
 import libsbml
 
-from ..core import GPR, Gene, Group, Metabolite, Model, Reaction, Configuration
+from ..core import Configuration, GPR, Gene, Group, Metabolite, Model, Reaction
 from ..manipulation.validate import check_metabolite_compartment_formula
 from ..util.solver import linear_reaction_coefficients, set_objective
 

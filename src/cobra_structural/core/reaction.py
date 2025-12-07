@@ -192,7 +192,7 @@ class Reaction(Object):
         if self.model is None:
             return None
         # For structural-only models without solver, return None
-        if not hasattr(self.model, 'variables'):
+        if not hasattr(self.model, "variables"):
             return None
         return self.model.variables.get(self.id)
 
@@ -209,7 +209,7 @@ class Reaction(Object):
         if self.model is None:
             return None
         # For structural-only models without solver, return None
-        if not hasattr(self.model, 'variables'):
+        if not hasattr(self.model, "variables"):
             return None
         return self.model.variables.get(self.reverse_id)
 

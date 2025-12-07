@@ -20,6 +20,208 @@ except ImportError:
     scipy_sparse = None
     scipy_io = None
 
+
+def make_community_gem_dict(model, C=None, d=None, dsense=None, ctrs=None):
+    """Create a MATLAB-compatible dict for mgPipe/Microbiome Modeling Toolbox.
+
+    This builds a dictionary that can be consumed by ``scipy.io.savemat`` to
+    generate a ``.mat`` file compatible with mgPipe. It works on structural-only
+    models (no solver required).
+
+    Parameters
+    ----------
+    model : cobra_structural.Model
+        The structural model to export.
+    C : scipy.sparse.csr_matrix, optional
+        Coupling matrix. Defaults to an empty (0 x num_rxns) CSR matrix.
+    d : numpy.ndarray, optional
+        RHS of coupling constraints. Defaults to an empty column vector.
+    dsense : numpy.ndarray, optional
+        Sense of coupling constraints ('E', 'L', 'G'). Defaults to empty array.
+    ctrs : numpy.ndarray | list, optional
+        Names of coupling constraints. Defaults to empty column vector.
+
+    Returns
+    -------
+    dict
+        Dictionary suitable for ``scipy.io.savemat`` (use ``{'model': returned_dict}``).
+    """
+
+    if scipy_sparse is None:
+        raise ImportError("scipy is required to export mgPipe-compatible .mat files")
+
+    num_rxns = len(model.reactions)
+    num_mets = len(model.metabolites)
+
+    # Objective vector from dict-based objective tracking
+    c = np.zeros((num_rxns, 1), dtype=np.float64)
+    objective = getattr(model, "objective", {}) or {}
+    for i, rxn in enumerate(model.reactions):
+        coef = objective.get(rxn, 0.0)
+        if coef:
+            c[i, 0] = float(coef)
+
+    # Stoichiometric matrix
+    S = create_stoichiometric_matrix(model)
+
+    # Bounds
+    lb = np.array(
+        [rxn.lower_bound for rxn in model.reactions], dtype=np.float64
+    ).reshape(-1, 1)
+    ub = np.array(
+        [rxn.upper_bound for rxn in model.reactions], dtype=np.float64
+    ).reshape(-1, 1)
+
+    # IDs and names
+    rxns = np.array([[rxn.id] for rxn in model.reactions], dtype=object)
+    rxnNames = np.array([[rxn.name] for rxn in model.reactions], dtype=object)
+    mets = np.array([[met.id] for met in model.metabolites], dtype=object)
+    metNames = np.array([[met.name] for met in model.metabolites], dtype=object)
+
+    # Constraint sense for metabolites (mass balance equalities)
+    csense = np.array(["E"] * num_mets, dtype="U1")
+
+    # Coupling matrices / vectors (defaults)
+    if C is None:
+        C = scipy_sparse.csr_matrix((0, num_rxns))
+    if d is None:
+        d = np.zeros((0, 1))
+    if dsense is None:
+        dsense = np.array([], dtype="<U1")
+    if ctrs is None:
+        ctrs = np.array([], dtype=object).reshape(-1, 1)
+    else:
+        ctrs = np.array(ctrs, dtype=object).reshape(-1, 1)
+
+    # Model name and objective direction
+    model_name = np.array([model.name], dtype=object)
+    osenseStr = np.array(
+        [getattr(model, "objective_direction", "max") or "max"], dtype="U3"
+    )
+
+    # Annotation helpers
+    def _chebi_or_empty(met):
+        if not hasattr(met, "annotation"):
+            return ""
+        ann = met.annotation or {}
+        if "chebi" not in ann:
+            return ""
+        val = ann["chebi"]
+        if isinstance(val, list) and val:
+            val = val[0]
+        if isinstance(val, str):
+            return val.replace("CHEBI:", "")
+        return ""
+
+    metChEBIID = np.array(
+        [_chebi_or_empty(m) for m in model.metabolites], dtype=object
+    ).reshape(-1, 1)
+
+    metCharges = np.array(
+        [
+            m.charge if getattr(m, "charge", None) is not None else np.nan
+            for m in model.metabolites
+        ]
+    ).reshape(-1, 1)
+
+    metFormulas = np.array(
+        [
+            m.formula if getattr(m, "formula", None) is not None else np.nan
+            for m in model.metabolites
+        ],
+        dtype=object,
+    ).reshape(-1, 1)
+
+    rules = np.array(
+        [getattr(r, "gene_reaction_rule", "") for r in model.reactions], dtype=object
+    ).reshape(-1, 1)
+
+    subSystems = np.array(
+        [getattr(r, "subsystem", "") for r in model.reactions], dtype=object
+    ).reshape(-1, 1)
+
+    return {
+        "rxns": rxns,
+        "rxnNames": rxnNames,
+        "mets": mets,
+        "metNames": metNames,
+        "S": S,
+        "b": np.zeros((num_mets, 1)),
+        "c": c,
+        "lb": lb,
+        "ub": ub,
+        "metChEBIID": metChEBIID,
+        "metCharges": metCharges,
+        "metFormulas": metFormulas,
+        "rules": rules,
+        "subSystems": subSystems,
+        "osenseStr": osenseStr,
+        "csense": csense,
+        "C": C,
+        "d": d,
+        "dsense": dsense,
+        "ctrs": ctrs,
+        "name": model_name,
+    }
+
+
+def save_community_mat_model(
+    model,
+    filename,
+    C=None,
+    d=None,
+    dsense=None,
+    ctrs=None,
+    do_compression=True,
+    oned_as="column",
+):
+    """Save a structural model as an mgPipe-compatible MATLAB ``.mat`` file.
+
+    This is a convenience wrapper around :func:`make_community_gem_dict` plus
+    :func:`scipy.io.savemat`.
+
+    Parameters
+    ----------
+    model : cobra_structural.Model
+        Structural model to export.
+    filename : str or pathlib.Path
+        Destination ``.mat`` path.
+    C, d, dsense, ctrs : optional
+        Coupling matrices/vectors (see :func:`make_community_gem_dict`).
+    do_compression : bool, optional
+        Compress the saved MAT file (default True).
+    oned_as : str, optional
+        Passed to ``savemat``; default "column" to match COBRA/mgPipe expectations.
+
+        Notes
+        -----
+        - The output is tailored for mgPipe / MATLAB COBRA Toolbox expectations.
+        - Full COBRApy's ``load_matlab_model`` may load core fields but will ignore
+            mgPipe-specific extras and cannot restore solver state (structural-only).
+        - For solver-based workflows, prefer exporting to JSON/SBML and loading in
+            full COBRApy (with solver) before optimization.
+    """
+
+    if scipy_io is None:
+        raise ImportError("scipy is required to save mgPipe-compatible .mat files")
+
+    model_dict = make_community_gem_dict(model, C=C, d=d, dsense=dsense, ctrs=ctrs)
+
+    # Ensure directory exists
+    filename = Path(filename)
+    if filename.parent and not filename.parent.exists():
+        filename.parent.mkdir(parents=True, exist_ok=True)
+
+    scipy_io.savemat(
+        filename,
+        {"model": model_dict},
+        do_compression=do_compression,
+        oned_as=oned_as,
+    )
+
+    return filename
+
+
 logger = logging.getLogger(__name__)
 
 # The following dictionaries are based on
