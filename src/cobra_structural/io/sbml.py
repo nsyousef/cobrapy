@@ -1344,7 +1344,12 @@ def _model_to_sbml(
     # Objective
     objective: "libsbml.Objective" = model_fbc.createObjective()
     objective.setId("obj")
-    objective.setType(SHORT_LONG_DIRECTION[cobra_model.objective.direction])
+    # Handle dict-based objectives (structural models) and solver-based objectives
+    if isinstance(cobra_model.objective, dict):
+        direction = cobra_model.objective_direction
+    else:
+        direction = cobra_model.objective.direction
+    objective.setType(SHORT_LONG_DIRECTION[direction])
     model_fbc.setActiveObjectiveId("obj")
 
     # Reactions

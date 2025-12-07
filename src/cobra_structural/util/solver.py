@@ -91,6 +91,12 @@ def linear_reaction_coefficients(
     """
     linear_coefficients = {}
     reactions = model.reactions if not reactions else reactions
+    
+    # Handle dict-based objectives (structural models without solver)
+    if isinstance(model.objective, dict):
+        return {rxn: coef for rxn, coef in model.objective.items() if rxn in reactions}
+    
+    # Handle solver-based objectives (full COBRApy models)
     try:
         objective_expression = model.solver.objective.expression
         coefficients = objective_expression.as_coefficients_dict()
@@ -160,6 +166,23 @@ def set_objective(
         If the type of `value` is not one of the accepted ones.
 
     """
+    # Handle structural models without solver (dict-based objectives)
+    if not hasattr(model, 'problem') or not hasattr(model, 'solver'):
+        if isinstance(value, dict):
+            if additive and isinstance(model.objective, dict):
+                # Add to existing objective
+                new_obj = model.objective.copy()
+                for rxn, coef in value.items():
+                    new_obj[rxn] = new_obj.get(rxn, 0) + coef
+                model.objective = new_obj
+            else:
+                model.objective = value
+            return
+        else:
+            raise TypeError(
+                f"Structural models only support dict objectives, not {type(value)}"
+            )
+    
     interface = model.problem
     reverse_value = model.solver.objective.expression
     reverse_value = interface.Objective(
