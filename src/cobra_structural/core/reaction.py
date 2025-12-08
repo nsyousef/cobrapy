@@ -880,7 +880,8 @@ class Reaction(Object):
             Remove orphaned genes and metabolites from the model as well (default
             False).
         """
-        self._model.remove_reactions([self], remove_orphans=remove_orphans)
+        if self._model is not None:
+            self._model.remove_reactions([self], remove_orphans=remove_orphans)
 
     def delete(self, remove_orphans: bool = False) -> None:
         """Remove the reaction from a model.

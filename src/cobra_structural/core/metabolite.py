@@ -284,7 +284,8 @@ class Metabolite(Species):
             associated reactions.  If True then all associated
             reactions are removed from the Model.
         """
-        self._model.remove_metabolites(self, destructive)
+        if self._model is not None:
+            self._model.remove_metabolites(self, destructive)
 
     def summary(
         self,
