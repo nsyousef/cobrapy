@@ -1299,13 +1299,15 @@ class Reaction(Object):
         if model is not None:
             model.add_metabolites(new_metabolites)
 
-            for metabolite, coefficient in self._metabolites.items():
-                model.constraints[metabolite.id].set_linear_coefficients(
-                    {
-                        self.forward_variable: coefficient,
-                        self.reverse_variable: -coefficient,
-                    }
-                )
+            # Only update constraints if the model has a solver (not in structural-only models)
+            if hasattr(model, 'constraints'):
+                for metabolite, coefficient in self._metabolites.items():
+                    model.constraints[metabolite.id].set_linear_coefficients(
+                        {
+                            self.forward_variable: coefficient,
+                            self.reverse_variable: -coefficient,
+                        }
+                    )
 
         for metabolite, the_coefficient in list(self._metabolites.items()):
             if the_coefficient == 0:
