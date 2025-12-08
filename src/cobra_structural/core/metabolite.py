@@ -87,7 +87,9 @@ class Metabolite(Species):
             raise ValueError(
                 f"The model already contains a metabolite with the id:" f" {value}"
             )
-        self.model.constraints[self.id].name = value
+        # Only update constraint if the model has a solver (not in structural-only models)
+        if hasattr(self.model, 'constraints') and self.id in self.model.constraints:
+            self.model.constraints[self.id].name = value
         self._id = value
         self.model.metabolites._generate_index()
 
