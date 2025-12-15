@@ -523,14 +523,20 @@ class Model(Object):
             associated_groups = self.get_associated_groups(x)
             for group in associated_groups:
                 group.remove_members(x)
-
-            if not destructive:
-                for the_reaction in list(x._reaction):
-                    the_coefficient = the_reaction._metabolites[x]
-                    the_reaction.subtract_metabolites({x: the_coefficient})
-            else:
-                for x2 in list(x._reaction):
-                    x2.remove_from_model()
+        if not destructive:
+            reaction_coefficients: Dict[Reaction, Dict[Metabolite, float]] = {}
+            for metabolite in metabolite_list:
+                for reaction in list(metabolite._reaction):
+                    coefficients = reaction_coefficients.setdefault(reaction, {})
+                    coefficients[metabolite] = reaction._metabolites[metabolite]
+            for reaction, coefficients in reaction_coefficients.items():
+                reaction.subtract_metabolites(coefficients)
+        else:
+            reactions_to_remove = set()
+            for metabolite in metabolite_list:
+                reactions_to_remove.update(list(metabolite._reaction))
+            for reaction in reactions_to_remove:
+                reaction.remove_from_model()
 
         self.metabolites -= metabolite_list
 
@@ -737,47 +743,73 @@ class Model(Object):
         -----
         This model is structural-only and does not maintain solver variables.
         """
-        if isinstance(reactions, str) or hasattr(reactions, "id"):
+        if isinstance(reactions, (str, Reaction)) or not hasattr(reactions, "__iter__"):
             warn("need to pass in a list")
             reactions = [reactions]
 
         context = get_context(self)
-
+        normalized: List[Reaction] = []
         for reaction in reactions:
+            reaction_id = reaction.id if hasattr(reaction, "id") else reaction
             try:
-                reaction = self.reactions[self.reactions.index(reaction)]
-            except ValueError:
+                normalized.append(self.reactions.get_by_id(reaction_id))
+            except KeyError:
                 warn(f"{reaction} not in {self}")
-            else:
-                if context:
-                    context(partial(setattr, reaction, "_model", self))
-                    context(partial(self.reactions.add, reaction))
 
-                self.reactions.remove(reaction)
-                reaction._model = None
+        if not normalized:
+            return None
 
-                for met in reaction._metabolites:
-                    if reaction in met._reaction:
-                        met._reaction.remove(reaction)
-                        if context:
-                            context(partial(met._reaction.add, reaction))
-                        if remove_orphans and len(met._reaction) == 0:
-                            self.remove_metabolites(met)
+        unique_reactions: List[Reaction] = []
+        seen_ids = set()
+        for reaction in normalized:
+            if reaction.id in seen_ids:
+                continue
+            seen_ids.add(reaction.id)
+            unique_reactions.append(reaction)
 
-                for gene in reaction._genes:
-                    if reaction in gene._reaction:
-                        gene._reaction.remove(reaction)
-                        if context:
-                            context(partial(gene._reaction.add, reaction))
+        metabolites_to_check: Dict[str, Metabolite] = {}
+        genes_to_check: Dict[str, Gene] = {}
 
-                        if remove_orphans and len(gene._reaction) == 0:
-                            self.genes.remove(gene)
-                            if context:
-                                context(partial(self.genes.add, gene))
+        for reaction in unique_reactions:
+            if context:
+                context(partial(setattr, reaction, "_model", self))
+                context(partial(self.reactions.add, reaction))
 
-                associated_groups = self.get_associated_groups(reaction)
-                for group in associated_groups:
-                    group.remove_members(reaction)
+            self.reactions.remove(reaction)
+            reaction._model = None
+
+            for met in reaction._metabolites:
+                if reaction in met._reaction:
+                    met._reaction.remove(reaction)
+                    if context:
+                        context(partial(met._reaction.add, reaction))
+                metabolites_to_check[met.id] = met
+
+            for gene in reaction._genes:
+                if reaction in gene._reaction:
+                    gene._reaction.remove(reaction)
+                    if context:
+                        context(partial(gene._reaction.add, reaction))
+                genes_to_check[gene.id] = gene
+
+            associated_groups = self.get_associated_groups(reaction)
+            for group in associated_groups:
+                group.remove_members(reaction)
+
+        if remove_orphans:
+            orphan_metabolites = [
+                metabolite
+                for metabolite in metabolites_to_check.values()
+                if len(metabolite._reaction) == 0
+            ]
+            if orphan_metabolites:
+                self.remove_metabolites(orphan_metabolites)
+
+            for gene in list(genes_to_check.values()):
+                if len(gene._reaction) == 0 and gene in self.genes:
+                    self.genes.remove(gene)
+                    if context:
+                        context(partial(self.genes.add, gene))
 
     def add_groups(self, group_list: Union[str, Group, List[Group]]) -> None:
         """Add groups to the model.
