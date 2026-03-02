@@ -142,8 +142,11 @@ class Reaction(Object):
         reverse_variable = self.reverse_variable
         self._id = value
         self.model.reactions._generate_index()
-        forward_variable.name = self.id
-        reverse_variable.name = self.reverse_id
+        # Only update variable names if they exist (not in structural-only models)
+        if forward_variable is not None:
+            forward_variable.name = self.id
+        if reverse_variable is not None:
+            reverse_variable.name = self.reverse_id
 
     @property
     def reverse_id(self) -> str:
@@ -184,12 +187,14 @@ class Reaction(Object):
         -------
         optlang.interface.Variable, optional
             An optlang variable for the forward flux or None if reaction is
-            not associated with a model.
+            not associated with a model or if model is structural-only (no solver).
         """
-        if self.model is not None:
-            return self.model.variables[self.id]
-        else:
+        if self.model is None:
             return None
+        # For structural-only models without solver, return None
+        if not hasattr(self.model, "variables"):
+            return None
+        return self.model.variables.get(self.id)
 
     @property
     def reverse_variable(self) -> Optional["Variable"]:
@@ -199,12 +204,14 @@ class Reaction(Object):
         -------
         optlang.interface.Variable, optional
             An optlang variable for the reverse flux or None if reaction is
-            not associated with a model.
+            not associated with a model or if model is structural-only (no solver).
         """
-        if self.model is not None:
-            return self.model.variables[self.reverse_id]
-        else:
+        if self.model is None:
             return None
+        # For structural-only models without solver, return None
+        if not hasattr(self.model, "variables"):
+            return None
+        return self.model.variables.get(self.reverse_id)
 
     @property
     def objective_coefficient(self) -> float:
@@ -301,13 +308,13 @@ class Reaction(Object):
         Sets the forward_variable and reverse_variable bounds based on lower and
         upper bounds. This function corrects for bounds defined as inf or -inf.
         This function will also adjust the associated optlang variables associated
-        with the reaction.
+        with the reaction. This is a no-op for structural-only models without solver.
 
         See Also
         -------
         optlang.interface.set_bounds
         """
-        if self.model is None:
+        if self.model is None or self.forward_variable is None:
             return
         # We know that `lb <= ub`.
         if self._lower_bound > 0:
@@ -477,7 +484,8 @@ class Reaction(Object):
         ------
         RuntimeError
             If the underlying model was never optimized beforehand or the
-            reaction is not part of a model.
+            reaction is not part of a model, or if the model is structural-only
+            without a solver.
         OptimizationError
             If the solver status is anything other than 'optimal'.
         AssertionError
@@ -493,6 +501,13 @@ class Reaction(Object):
         >>> solution.fluxes.PFK
         7.4773819621602833
         """
+        if self.forward_variable is None:
+            raise RuntimeError(
+                f"reaction '{self.id}' flux is not available. This is a "
+                "structural-only model without a solver. To compute fluxes, "
+                "export the model to a file (e.g., .json or .sbml) and load "
+                "it into a full COBRApy instance with a solver."
+            )
         try:
             check_solver_status(self._model.solver.status)
             return self.forward_variable.primal - self.reverse_variable.primal
@@ -517,7 +532,7 @@ class Reaction(Object):
 
         Returns
         -------
-        reducd_cost: float
+        reduced_cost: float
             A float representing the reduced cost.
 
         Warnings
@@ -535,8 +550,9 @@ class Reaction(Object):
         Raises
         ------
         RuntimeError
-            If the underlying model was never optimized beforehand or the
-            reaction is not part of a model.
+            If the underlying model was never optimized beforehand, the
+            reaction is not part of a model, or if the model is structural-only
+            without a solver.
         OptimizationError
             If the solver status is anything other than 'optimal'.
 
@@ -550,6 +566,13 @@ class Reaction(Object):
         >>> solution.reduced_costs.PFK
         -8.6736173798840355e-18
         """
+        if self.forward_variable is None:
+            raise RuntimeError(
+                f"reaction '{self.id}' reduced cost is not available. This is a "
+                "structural-only model without a solver. To compute reduced costs, "
+                "export the model to a file (e.g., .json or .sbml) and load "
+                "it into a full COBRApy instance with a solver."
+            )
         try:
             check_solver_status(self._model.solver.status)
             return self.forward_variable.dual - self.reverse_variable.dual
@@ -857,7 +880,8 @@ class Reaction(Object):
             Remove orphaned genes and metabolites from the model as well (default
             False).
         """
-        self._model.remove_reactions([self], remove_orphans=remove_orphans)
+        if self._model is not None:
+            self._model.remove_reactions([self], remove_orphans=remove_orphans)
 
     def delete(self, remove_orphans: bool = False) -> None:
         """Remove the reaction from a model.
@@ -1276,13 +1300,15 @@ class Reaction(Object):
         if model is not None:
             model.add_metabolites(new_metabolites)
 
-            for metabolite, coefficient in self._metabolites.items():
-                model.constraints[metabolite.id].set_linear_coefficients(
-                    {
-                        self.forward_variable: coefficient,
-                        self.reverse_variable: -coefficient,
-                    }
-                )
+            # Only update constraints if the model has a solver (not in structural-only models)
+            if hasattr(model, 'constraints'):
+                for metabolite, coefficient in self._metabolites.items():
+                    model.constraints[metabolite.id].set_linear_coefficients(
+                        {
+                            self.forward_variable: coefficient,
+                            self.reverse_variable: -coefficient,
+                        }
+                    )
 
         for metabolite, the_coefficient in list(self._metabolites.items()):
             if the_coefficient == 0:

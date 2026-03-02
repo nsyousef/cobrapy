@@ -87,7 +87,9 @@ class Metabolite(Species):
             raise ValueError(
                 f"The model already contains a metabolite with the id:" f" {value}"
             )
-        self.model.constraints[self.id].name = value
+        # Only update constraint if the model has a solver (not in structural-only models)
+        if hasattr(self.model, 'constraints') and self.id in self.model.constraints:
+            self.model.constraints[self.id].name = value
         self._id = value
         self.model.metabolites._generate_index()
 
@@ -233,8 +235,9 @@ class Metabolite(Species):
         Raises
         ------
         RuntimeError
-            If the underlying model was never optimized beforehand or the
-            metabolite is not part of a model.
+            If the underlying model was never optimized beforehand, the
+            metabolite is not part of a model, or if the model is structural-only
+            without a solver.
         OptimizationError
             If the solver status is anything other than 'optimal'.
 
@@ -248,6 +251,13 @@ class Metabolite(Species):
         >>> solution.shadow_prices.glc__D_e
         -0.091664746375104883
         """
+        if not hasattr(self._model, 'constraints'):
+            raise RuntimeError(
+                f"metabolite '{self.id}' shadow price is not available. This is a "
+                "structural-only model without a solver. To compute shadow prices, "
+                "export the model to a file (e.g., .json or .sbml) and load "
+                "it into a full COBRApy instance with a solver."
+            )
         try:
             check_solver_status(self._model.solver.status)
             return self._model.constraints[self.id].dual
@@ -274,7 +284,8 @@ class Metabolite(Species):
             associated reactions.  If True then all associated
             reactions are removed from the Model.
         """
-        self._model.remove_metabolites(self, destructive)
+        if self._model is not None:
+            self._model.remove_metabolites(self, destructive)
 
     def summary(
         self,

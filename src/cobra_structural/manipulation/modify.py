@@ -5,7 +5,7 @@ from functools import partial
 from itertools import chain
 from typing import TYPE_CHECKING, Dict
 
-from cobra.util import get_context
+from cobra_structural.util import get_context
 
 
 if TYPE_CHECKING:

@@ -5,7 +5,7 @@ from ast import And, BoolOp, Name, NodeTransformer
 from functools import partial
 from typing import TYPE_CHECKING, Iterable, List, Optional, Set, Tuple, Union
 
-from cobra.util import get_context
+from cobra_structural.util import get_context
 
 
 if TYPE_CHECKING:

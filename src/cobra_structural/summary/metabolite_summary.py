@@ -1,55 +1,58 @@
-"""Provide the model summary class."""
+"""Provide the metabolite summary class."""
 
 import logging
 from operator import attrgetter
-from typing import TYPE_CHECKING, Dict, List, Optional, Union
+from textwrap import shorten
+from typing import TYPE_CHECKING, List, Optional, Union
 
 import pandas as pd
 
-from cobra.core import Reaction
-from cobra.flux_analysis import flux_variability_analysis, pfba
-from cobra.summary import Summary
-from cobra.util.solver import linear_reaction_coefficients
+from cobra_structural.flux_analysis import flux_variability_analysis, pfba
+from cobra_structural.summary import Summary
 
 
 if TYPE_CHECKING:
-    from cobra.core import Metabolite, Model, Solution
+    from cobra.core import Metabolite, Model, Reaction, Solution
 
 
 logger = logging.getLogger(__name__)
 
 
-class ModelSummary(Summary):
+class MetaboliteSummary(Summary):
     """
-    Define the model summary.
+    Define the metabolite summary.
 
     Attributes
     ----------
-    uptake_flux : pandas.DataFrame
-        A pandas DataFrame of only the uptake fluxes.
-    secretion_flux : pandas.DataFrame
+    producing_flux : pandas.DataFrame
+        A pandas DataFrame of only the producing fluxes.
+    consuming_flux : pandas.DataFrame
         A pandas DataFrame of only the consuming fluxes.
+
     See Also
     --------
     Summary : Parent that defines further attributes.
-    MetaboliteSummary
     ReactionSummary
+    ModelSummary
 
     """
 
     def __init__(
         self,
         *,
+        metabolite: "Metabolite",
         model: "Model",
         solution: Optional["Solution"] = None,
         fva: Optional[Union[float, pd.DataFrame]] = None,
         **kwargs,
-    ):
+    ) -> None:
         """
-        Initialize a model summary.
+        Initialize a metabolite summary.
 
         Parameters
         ----------
+        metabolite : cobra.Metabolite
+            The metabolite object whose summary we intend to get.
         model : cobra.Model
             The metabolic model for which to generate a metabolite summary.
         solution : cobra.Solution, optional
@@ -70,17 +73,17 @@ class ModelSummary(Summary):
         See Also
         --------
         Summary : Parent that has further default parameters.
-        MetaboliteSummary
         ReactionSummary
+        ModelSummary
 
         """
         super().__init__(**kwargs)
-        self._objective = None
-        self._objective_value = None
-        self._boundary = None
-        self._boundary_metabolites = None
-        self.uptake_flux: Optional[pd.DataFrame] = None
-        self.secretion_flux: Optional[pd.DataFrame] = None
+        self._metabolite = metabolite.copy()
+        self._reactions: List["Reaction"] = [
+            r.copy() for r in sorted(metabolite.reactions, key=attrgetter("id"))
+        ]
+        self.producing_flux: Optional[pd.DataFrame] = None
+        self.consuming_flux: Optional[pd.DataFrame] = None
         self._generate(model, solution, fva)
 
     def _generate(
@@ -109,7 +112,6 @@ class ModelSummary(Summary):
         """
         super()._generate(model=model, solution=solution, fva=fva)
 
-        coefficients = linear_reaction_coefficients(model)
         if solution is None:
             logger.info("Generating new parsimonious flux distribution.")
             solution = pfba(model)
@@ -118,38 +120,22 @@ class ModelSummary(Summary):
             logger.info("Performing flux variability analysis.")
             fva = flux_variability_analysis(
                 model=model,
-                reaction_list=model.boundary,
+                reaction_list=[r.id for r in self._reactions],
                 fraction_of_optimum=fva,
             )
-        if coefficients:
-            self._objective: Dict["Reaction", float] = {
-                rxn.copy(): coef for rxn, coef in coefficients.items()
-            }
-            self._objective_value: float = sum(
-                solution[rxn.id] * coef for rxn, coef in self._objective.items()
-            )
-        else:
-            logger.warning(
-                "Non-linear or non-reaction model objective. Falling back to minimal "
-                "display."
-            )
-            self._objective = {
-                Reaction(id="Expression", name="Expression"): float("nan")
-            }
-            self._objective_value: float = float("nan")
-        self._boundary: List["Reaction"] = [
-            rxn.copy() for rxn in sorted(model.boundary, key=attrgetter("id"))
-        ]
-        self._boundary_metabolites: List["Metabolite"] = [
-            met.copy() for rxn in self._boundary for met in rxn.metabolites
-        ]
+
+        # Create the basic flux table.
         flux = pd.DataFrame(
             data=[
-                (rxn.id, met.id, rxn.get_coefficient(met.id), solution[rxn.id])
-                for rxn, met in zip(self._boundary, self._boundary_metabolites)
+                (
+                    r.id,
+                    solution[r.id],
+                    r.get_coefficient(self._metabolite.id),
+                )
+                for r in self._reactions
             ],
-            columns=["reaction", "metabolite", "factor", "flux"],
-            index=[r.id for r in self._boundary],
+            columns=["reaction", "flux", "factor"],
+            index=[r.id for r in self._reactions],
         )
         # Scale fluxes by stoichiometric coefficient.
         flux["flux"] *= flux["factor"]
@@ -182,30 +168,30 @@ class ModelSummary(Summary):
         # metabolite is a product in the reaction.
         is_produced = (flux["flux"] > 0) | ((flux["flux"] == 0) & (flux["factor"] > 0))
         if fva is not None:
-            self.uptake_flux = flux.loc[
-                is_produced, ["flux", "minimum", "maximum", "reaction", "metabolite"]
+            self.producing_flux = flux.loc[
+                is_produced, ["flux", "minimum", "maximum", "reaction"]
             ].copy()
         else:
-            self.uptake_flux = flux.loc[
-                is_produced, ["flux", "reaction", "metabolite"]
-            ].copy()
+            self.producing_flux = flux.loc[is_produced, ["flux", "reaction"]].copy()
+        production = self.producing_flux["flux"].abs()
+        self.producing_flux["percent"] = production / production.sum()
 
         # Create consumption table from consuming fluxes or zero fluxes where the
         # metabolite is a substrate in the reaction.
         is_consumed = (flux["flux"] < 0) | ((flux["flux"] == 0) & (flux["factor"] < 0))
         if fva is not None:
-            self.secretion_flux = flux.loc[
-                is_consumed, ["flux", "minimum", "maximum", "reaction", "metabolite"]
+            self.consuming_flux = flux.loc[
+                is_consumed, ["flux", "minimum", "maximum", "reaction"]
             ].copy()
         else:
-            self.secretion_flux = flux.loc[
-                is_consumed, ["flux", "reaction", "metabolite"]
-            ].copy()
+            self.consuming_flux = flux.loc[is_consumed, ["flux", "reaction"]].copy()
+        consumption = self.consuming_flux["flux"].abs()
+        self.consuming_flux["percent"] = consumption / consumption.sum()
 
         self._flux = flux
 
     def _display_flux(
-        self, frame: pd.DataFrame, names: bool, element: str, threshold: float
+        self, frame: pd.DataFrame, names: bool, threshold: float
     ) -> pd.DataFrame:
         """
         Transform a flux data frame for display.
@@ -216,8 +202,6 @@ class ModelSummary(Summary):
             Either the producing or the consuming fluxes.
         names : bool
             Whether or not elements should be displayed by their common names.
-        element : str
-            The atomic element to summarize fluxes for.
         threshold : float
             Hide fluxes below the threshold from being displayed.
 
@@ -237,44 +221,18 @@ class ModelSummary(Summary):
             ].copy()
         else:
             frame = frame.loc[frame["flux"].abs() >= threshold, :].copy()
-
-        metabolites = {m.id: m for m in self._boundary_metabolites}
-
-        element_num = f"{element}-Number"
-        frame[element_num] = [
-            metabolites[met_id].elements.get(element, 0)
-            for met_id in frame["metabolite"]
+        reactions = {r.id: r for r in self._reactions}
+        frame["definition"] = [
+            reactions[rxn_id].build_reaction_string(names)
+            for rxn_id in frame["reaction"]
         ]
-        element_percent = f"{element}-Flux"
-        frame[element_percent] = frame[element_num] * frame["flux"].abs()
-        total = frame[element_percent].sum()
-        if total > 0.0:
-            frame[element_percent] /= total
-        frame[element_percent] = [f"{x:.2%}" for x in frame[element_percent]]
-
-        if names:
-            frame["metabolite"] = [
-                metabolites[met_id].name for met_id in frame["metabolite"]
-            ]
-
         if "minimum" in frame.columns and "maximum" in frame.columns:
             frame["range"] = list(
                 frame[["minimum", "maximum"]].itertuples(index=False, name=None)
             )
-            return frame[
-                [
-                    "metabolite",
-                    "reaction",
-                    "flux",
-                    "range",
-                    element_num,
-                    element_percent,
-                ]
-            ]
+            return frame[["percent", "flux", "range", "reaction", "definition"]]
         else:
-            return frame[
-                ["metabolite", "reaction", "flux", element_num, element_percent]
-            ]
+            return frame[["percent", "flux", "reaction", "definition"]]
 
     @staticmethod
     def _string_table(frame: pd.DataFrame, float_format: str, column_width: int) -> str:
@@ -302,6 +260,7 @@ class ModelSummary(Summary):
             index=False,
             na_rep="",
             formatters={
+                "Percent": "{:.2%}".format,
                 "Flux": f"{{:{float_format}}}".format,
                 "Range": lambda pair: f"[{pair[0]:{float_format}}; "
                 f"{pair[1]:{float_format}}]",
@@ -333,55 +292,28 @@ class ModelSummary(Summary):
             index=False,
             na_rep="",
             formatters={
+                "Percent": "{:.2%}".format,
                 "Flux": f"{{:{float_format}}}".format,
                 "Range": lambda pair: f"[{pair[0]:{float_format}}; "
                 f" {pair[1]:{float_format}}]",
             },
         )
 
-    def _string_objective(self, names: bool) -> str:
-        """
-        Return a string representation of the objective.
-
-        Parameters
-        ----------
-        names : bool, optional
-            Whether or not elements should be displayed by their common names.
-
-        Returns
-        -------
-        str
-            The objective expression and value as a string.
-
-        """
-        if names:
-            objective = " + ".join(
-                [f"{coef} {rxn.name}" for rxn, coef in self._objective.items()]
-            )
-        else:
-            objective = " + ".join(
-                [f"{coef} {rxn.id}" for rxn, coef in self._objective.items()]
-            )
-        return f"{objective} = {self._objective_value}"
-
     def to_string(
         self,
         names: bool = False,
-        element: str = "C",
         threshold: Optional[float] = None,
         float_format: str = ".4G",
         column_width: int = 79,
     ) -> str:
         """
-        Return a pretty string representation of the model summary.
+        Return a pretty string representation of the metabolite summary.
 
         Parameters
         ----------
         names : bool, optional
             Whether or not elements should be displayed by their common names
             (default False).
-        element : str, optional
-            The atomic element to summarize uptake and secretion for (default 'C').
         threshold : float, optional
             Hide fluxes below the threshold from being displayed. If no value is
             given, the model tolerance is used (default None).
@@ -398,49 +330,53 @@ class ModelSummary(Summary):
         """
         threshold = self._normalize_threshold(threshold)
 
-        objective = self._string_objective(names)
+        if names:
+            metabolite = shorten(
+                self._metabolite.name, width=column_width, placeholder="..."
+            )
+        else:
+            metabolite = shorten(
+                self._metabolite.id, width=column_width, placeholder="..."
+            )
 
-        uptake = self._string_table(
-            self._display_flux(self.uptake_flux, names, element, threshold),
+        production = self._string_table(
+            self._display_flux(self.producing_flux, names, threshold),
             float_format,
             column_width,
         )
 
-        secretion = self._string_table(
-            self._display_flux(self.secretion_flux, names, element, threshold),
+        consumption = self._string_table(
+            self._display_flux(self.consuming_flux, names, threshold),
             float_format,
             column_width,
         )
 
         return (
-            f"Objective\n"
-            f"=========\n"
-            f"{objective}\n\n"
-            f"Uptake\n"
-            f"------\n"
-            f"{uptake}\n\n"
-            f"Secretion\n"
-            f"---------\n"
-            f"{secretion}\n"
+            f"{metabolite}\n"
+            f"{'=' * len(metabolite)}\n"
+            f"Formula: {self._metabolite.formula}\n\n"
+            f"Producing Reactions\n"
+            f"-------------------\n"
+            f"{production}\n\n"
+            f"Consuming Reactions\n"
+            f"-------------------\n"
+            f"{consumption}"
         )
 
     def to_html(
         self,
         names: bool = False,
-        element: str = "C",
         threshold: Optional[float] = None,
         float_format: str = ".4G",
     ) -> str:
         """
-        Return a rich HTML representation of the model summary.
+        Return a rich HTML representation of the metabolite summary.
 
         Parameters
         ----------
         names : bool, optional
             Whether or not elements should be displayed by their common names
             (default False).
-        element : str, optional
-            The atomic element to summarize uptake and secretion for (default 'C').
         threshold : float, optional
             Hide fluxes below the threshold from being displayed. If no value is
             given, the model tolerance is used (default None).
@@ -455,23 +391,26 @@ class ModelSummary(Summary):
         """
         threshold = self._normalize_threshold(threshold)
 
-        objective = self._string_objective(names)
+        if names:
+            metabolite = self._metabolite.name
+        else:
+            metabolite = self._metabolite.id
 
-        uptake = self._html_table(
-            self._display_flux(self.uptake_flux, names, element, threshold),
+        production = self._html_table(
+            self._display_flux(self.producing_flux, names, threshold),
             float_format,
         )
 
-        secretion = self._html_table(
-            self._display_flux(self.secretion_flux, names, element, threshold),
+        consumption = self._html_table(
+            self._display_flux(self.consuming_flux, names, threshold),
             float_format,
         )
 
         return (
-            f"<h3>Objective</h3>"
-            f"<p>{objective}</p>"
-            f"<h4>Uptake</h4>"
-            f"{uptake}"
-            f"<h4>Secretion</h4>"
-            f"{secretion}"
+            f"<h3>{metabolite}</h3>"
+            f"<p>{self._metabolite.formula}</p>"
+            f"<h4>Producing Reactions</h4>"
+            f"{production}"
+            f"<h4>Consuming Reactions</h4>"
+            f"{consumption}"
         )
